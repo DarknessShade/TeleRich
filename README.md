@@ -1,4 +1,4 @@
-# 🤖 Telegram Rich Markdown & HTML Bot
+# 🤖 Telegram [Rich Markdown](https://core.telegram.org/bots/api#rich-message-formatting-options) & HTML Bot
 
 [English](#english) | [فارسی](#فارسی)
 
