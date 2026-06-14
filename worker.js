@@ -11,12 +11,31 @@ export default {
   async fetch(request) {
     if (request.method === "GET") return new Response("✅ Bot is running!", { status: 200 });
     if (request.method !== "POST") return new Response("OK");
+
     let update;
     try { update = await request.json(); } catch { return new Response("Bad JSON", { status: 400 }); }
-    const message       = update.message;
-    const callbackQuery = update.callback_query;
-    if (callbackQuery) await handleCallback(callbackQuery);
-    else if (message?.text) await handleMessage(message);
+
+    try {
+      const message       = update.message;
+      const callbackQuery = update.callback_query;
+      if (callbackQuery) await handleCallback(callbackQuery);
+      else if (message?.text) await handleMessage(message);
+    } catch (err) {
+      console.error("Handler error:", err && err.stack ? err.stack : err);
+      // Try to notify the chat if possible, but never fail the response
+      try {
+        const chatId = update.message?.chat?.id || update.callback_query?.message?.chat?.id;
+        if (chatId) {
+          await fetch(`${TELEGRAM_API}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: `⚠️ Internal error: ${err?.message || err}` }),
+          });
+        }
+      } catch {}
+    }
+
+    // ALWAYS return 200 — Telegram disables webhooks after repeated non-200 responses
     return new Response("OK", { status: 200 });
   },
 };
@@ -28,6 +47,9 @@ function mainKeyboard(lang) {
       [
         { text: "📖 راهنمای Markdown", callback_data: "fa_help_md"   },
         { text: "🌐 راهنمای HTML",     callback_data: "fa_help_html" },
+      ],
+      [
+        { text: "🖼 راهنمای مدیا", callback_data: "fa_help_media" },
       ],
       [
         { text: "🎨 دمو کامل",   callback_data: "fa_demo"  },
@@ -43,6 +65,9 @@ function mainKeyboard(lang) {
       [
         { text: "📖 Markdown Guide", callback_data: "en_help_md"   },
         { text: "🌐 HTML Guide",     callback_data: "en_help_html" },
+      ],
+      [
+        { text: "🖼 Media Guide", callback_data: "en_help_media" },
       ],
       [
         { text: "🎨 Full Demo", callback_data: "en_demo"  },
@@ -72,19 +97,90 @@ function backKeyboard(lang) {
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 async function handleMessage(message) {
-  const chatId = message.chat.id;
-  const text   = message.text.trim();
+  const chatId  = message.chat.id;
+  const rawText = message.text;
+  const trimmed = rawText.trim();
 
-  if (text === "/start" || text === "/help") {
+  if (trimmed === "/start" || trimmed === "/help") {
     // Show language selection first
     await sendPlain(chatId, LANG_SELECT_MESSAGE, LANG_SELECT_KEYBOARD);
     return;
   }
 
+  // Telegram clients auto-format `**bold**`, ```code```, etc. typed by the user
+  // into formatting entities and STRIP the raw markdown syntax from message.text.
+  // Reconstruct the original Markdown/HTML from text + entities before echoing it.
+  let text = entitiesToMarkdown(rawText, message.entities).trim();
+  if (!text) text = trimmed;
+
   if (text.startsWith("<") || /<\/?\w/.test(text)) {
     await sendRichHtml(chatId, text);
   } else {
     await sendRichMarkdown(chatId, text);
+  }
+}
+
+// ─── Convert Telegram message entities back into Markdown/HTML source ─────────
+function entitiesToMarkdown(text, entities) {
+  if (!entities || !entities.length) return text;
+
+  const items = entities.map((e, idx) => ({ e, idx, start: e.offset, end: e.offset + e.length }));
+
+  function isTopLevel(item, pool) {
+    return !pool.some(other => {
+      if (other.idx === item.idx) return false;
+      const strictlyLarger =
+        other.start <= item.start && other.end >= item.end &&
+        (other.start < item.start || other.end > item.end);
+      const sameSpanOuter =
+        other.start === item.start && other.end === item.end && other.idx < item.idx;
+      return strictlyLarger || sameSpanOuter;
+    });
+  }
+
+  function render(start, end, pool) {
+    const inRange = pool.filter(it => it.start >= start && it.end <= end);
+    const top = inRange.filter(it => isTopLevel(it, inRange)).sort((a, b) => a.start - b.start);
+
+    let out = "";
+    let pos = start;
+    for (const item of top) {
+      out += text.slice(pos, item.start);
+      // Exclude this item itself to avoid infinite recursion on its own range
+      const innerPool = pool.filter(p => p.idx !== item.idx);
+      const inner = render(item.start, item.end, innerPool);
+      out += wrapEntity(item.e, inner);
+      pos = item.end;
+    }
+    out += text.slice(pos, end);
+    return out;
+  }
+
+  return render(0, text.length, items);
+}
+
+function wrapEntity(e, content) {
+  switch (e.type) {
+    case "bold":          return `**${content}**`;
+    case "italic":        return `*${content}*`;
+    case "underline":     return `<u>${content}</u>`;
+    case "strikethrough": return `~~${content}~~`;
+    case "spoiler":       return `||${content}||`;
+    case "code":          return `\`${content}\``;
+    case "pre": {
+      const lang = e.language || "";
+      return "```" + lang + "\n" + content + "\n```";
+    }
+    case "text_link":
+      return `[${content}](${e.url})`;
+    case "text_mention":
+      return e.user ? `[${content}](tg://user?id=${e.user.id})` : content;
+    case "blockquote":
+    case "expandable_blockquote":
+      return content.split("\n").map(l => `>${l}`).join("\n");
+    default:
+      // mention, hashtag, cashtag, bot_command, url, email, phone_number, custom_emoji, etc.
+      return content;
   }
 }
 
@@ -112,6 +208,8 @@ async function handleCallback(cb) {
     await editRichMarkdown(chatId, msgId, HELP_MD[lang], kb);
   } else if (action === "help_html") {
     await editRichMarkdown(chatId, msgId, HELP_HTML[lang], kb);
+  } else if (action === "help_media") {
+    await editRichMarkdown(chatId, msgId, HELP_MEDIA[lang], kb);
   } else if (action === "demo") {
     await editRichMarkdown(chatId, msgId, DEMO[lang], kb);
   } else if (action === "about") {
@@ -159,6 +257,7 @@ async function callApi(method, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
   if (!res.ok) {
     const err = await res.text();
     console.error(`[${method}] ${res.status}: ${err}`);
@@ -179,11 +278,15 @@ const WELCOME = {
 
 هر متن **Markdown** یا **HTML** بفرستید، به صورت Rich Message رندر میشه.
 
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
+
 از دکمه‌های زیر برای دیدن راهنما و دمو استفاده کنید 👇`,
 
   en: `# 🤖 Rich Markdown Bot
 
 Send any **Markdown** or **HTML** text and it will be echoed back as a rendered Rich Message.
+
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
 
 Use the buttons below to explore 👇`,
 };
@@ -222,6 +325,8 @@ const HELP_MD = {
 متن Markdown بفرستید، رندر شده برمیگرده.
 کادر خاکستری = چیزی که تایپ میکنید ↓ نتیجه بعدشه.
 
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
+
 ---
 
 ## Text Styles
@@ -237,14 +342,20 @@ const HELP_MD = {
 ## Headings
 
 \`\`\`
-# Big title
-## Section
-### Subsection
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
 \`\`\`
 
-# Big title
-## Section
-### Subsection
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
 
 ---
 
@@ -284,13 +395,55 @@ const HELP_MD = {
 
 ---
 
-## Code Blocks
+## Block Quote (چند خط)
 
 \`\`\`
+>Block quotation started
+>
+>Block quotation continued on the next line
+>Block quotation continued on the same line
+
+>The last line of the block quotation
+\`\`\`
+
+>Block quotation started
+>
+>Block quotation continued on the next line
+>Block quotation continued on the same line
+
+>The last line of the block quotation
+
+---
+
+## Unordered List (علامت‌های مختلف)
+
+\`\`\`
+- unordered list item
+* unordered list item
++ unordered list item
+\`\`\`
+
+- unordered list item
+* unordered list item
++ unordered list item
+
+---
+
+## Divider
+
+\`\`\`
+---
+\`\`\`
+
+---
+
+## Code Blocks
+
+\`\`\`\`
 \`\`\`python
 print("hello")
 \`\`\`
-\`\`\`
+\`\`\`\`
 
 \`\`\`python
 print("hello")
@@ -300,12 +453,12 @@ print("hello")
 
 ## Tables
 
-\`\`\`
+\`\`\`\`
 | Lang | Speed |
 |:-----|------:|
 | Rust | fast  |
 | Py   | comfy |
-\`\`\`
+\`\`\`\`
 
 | Lang | Speed |
 |:-----|------:|
@@ -316,10 +469,10 @@ print("hello")
 
 ## Math
 
-\`\`\`
+\`\`\`\`
 Inline $E = mc^2$ and a block:
 $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
-\`\`\`
+\`\`\`\`
 
 Inline $E = mc^2$ and a block:
 
@@ -329,11 +482,11 @@ $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 
 ## Details
 
-\`\`\`
+\`\`\`\`
 <details><summary>**کلیک کن**</summary>
 محتوای مخفی!
 </details>
-\`\`\`
+\`\`\`\`
 
 <details><summary>**کلیک کن**</summary>
 محتوای مخفی!
@@ -348,6 +501,7 @@ $$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$
 Send Markdown text and get it echoed back rendered.
 Grey box = what you type ↓ result comes right after.
 
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
 ---
 
 ## Text Styles
@@ -363,14 +517,20 @@ Grey box = what you type ↓ result comes right after.
 ## Headings
 
 \`\`\`
-# Big title
-## Section
-### Subsection
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
 \`\`\`
 
-# Big title
-## Section
-### Subsection
+# Heading 1
+## Heading 2
+### Heading 3
+#### Heading 4
+##### Heading 5
+###### Heading 6
 
 ---
 
@@ -396,6 +556,20 @@ Grey box = what you type ↓ result comes right after.
 
 ---
 
+## Unordered List (all markers)
+
+\`\`\`
+- unordered list item
+* unordered list item
++ unordered list item
+\`\`\`
+
+- unordered list item
+* unordered list item
++ unordered list item
+
+---
+
 ## Links & Quotes
 
 \`\`\`
@@ -410,13 +584,41 @@ Grey box = what you type ↓ result comes right after.
 
 ---
 
-## Code Blocks
+## Block Quote (multi-line)
 
 \`\`\`
+>Block quotation started
+>
+>Block quotation continued on the next line
+>Block quotation continued on the same line
+
+>The last line of the block quotation
+\`\`\`
+
+>Block quotation started
+>
+>Block quotation continued on the next line
+>Block quotation continued on the same line
+
+>The last line of the block quotation
+
+---
+
+## Divider
+
+\`\`\`
+---
+\`\`\`
+
+---
+
+## Code Blocks
+
+\`\`\`\`
 \`\`\`python
 print("hello")
 \`\`\`
-\`\`\`
+\`\`\`\`
 
 \`\`\`python
 print("hello")
@@ -476,6 +678,8 @@ const HELP_HTML = {
 
 اگه پیامت با \`<\` شروع بشه، بات به عنوان HTML رندر میکنه.
 
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
+
 ---
 
 ## Text Styles
@@ -497,11 +701,15 @@ const HELP_HTML = {
 <h1>Heading 1</h1>
 <h2>Heading 2</h2>
 <h3>Heading 3</h3>
+<h4>Heading 4</h4>
+<h5>Heading 3</h5>
 \`\`\`
 
 <h1>Heading 1</h1>
 <h2>Heading 2</h2>
 <h3>Heading 3</h3>
+<h4>Heading 4</h4>
+<h5>Heading 3</h5>
 
 ---
 
@@ -527,12 +735,39 @@ const HELP_HTML = {
 \`\`\`
 <a href="https://telegram.org">Telegram</a>
 <blockquote>متن نقل‌قول<cite>نویسنده</cite></blockquote>
-<aside>Pull quote<cite>Author</cite></aside>
+<aside>Pull quote<cite>The Author</cite></aside>
 \`\`\`
 
 <a href="https://telegram.org">Telegram</a>
 <blockquote>متن نقل‌قول<cite>نویسنده</cite></blockquote>
-<aside>Pull quote<cite>Author</cite></aside>
+<aside>Pull quote<cite>The Author</cite></aside>
+
+---
+
+## Superscript & Subscript
+
+\`\`\`
+<sub>subscript text</sub>
+<sup>superscript text</sup>
+\`\`\`
+
+متن نرمال با <sub>subscript text</sub> و <sup>superscript text</sup>
+
+---
+
+## Footnotes
+
+\`\`\`
+Text with a reference[^id1] and another one[^id2].
+
+[^id1]: Definition of the first footnote.
+[^id2]: Definition of the second footnote.
+\`\`\`
+
+Text with a reference[^id1] and another one[^id2].
+
+[^id1]: Definition of the first footnote.
+[^id2]: Definition of the second footnote.
 
 ---
 
@@ -589,6 +824,8 @@ const HELP_HTML = {
 
 If your message starts with \`<\`, the bot renders it as HTML.
 
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
+
 ---
 
 ## Text Styles
@@ -610,11 +847,15 @@ If your message starts with \`<\`, the bot renders it as HTML.
 <h1>Heading 1</h1>
 <h2>Heading 2</h2>
 <h3>Heading 3</h3>
+<h4>Heading 4</h4>
+<h5>Heading 3</h5>
 \`\`\`
 
 <h1>Heading 1</h1>
 <h2>Heading 2</h2>
 <h3>Heading 3</h3>
+<h4>Heading 4</h4>
+<h5>Heading 3</h5>
 
 ---
 
@@ -640,12 +881,39 @@ If your message starts with \`<\`, the bot renders it as HTML.
 \`\`\`
 <a href="https://telegram.org">Telegram</a>
 <blockquote>Quote text<cite>Author</cite></blockquote>
-<aside>Pull quote<cite>Author</cite></aside>
+<aside>Pull quote<cite>The Author</cite></aside>
 \`\`\`
 
 <a href="https://telegram.org">Telegram</a>
 <blockquote>Quote text<cite>Author</cite></blockquote>
-<aside>Pull quote<cite>Author</cite></aside>
+<aside>Pull quote<cite>The Author</cite></aside>
+
+---
+
+## Superscript & Subscript
+
+\`\`\`
+<sub>subscript text</sub>
+<sup>superscript text</sup>
+\`\`\`
+
+Normal text with <sub>subscript text</sub> and <sup>superscript text</sup>
+
+---
+
+## Footnotes
+
+\`\`\`
+Text with a reference[^id1] and another one[^id2].
+
+[^id1]: Definition of the first footnote.
+[^id2]: Definition of the second footnote.
+\`\`\`
+
+Text with a reference[^id1] and another one[^id2].
+
+[^id1]: Definition of the first footnote.
+[^id2]: Definition of the second footnote.
 
 ---
 
@@ -699,11 +967,230 @@ If your message starts with \`<\`, the bot renders it as HTML.
 *Send some HTML and watch it render* ✨`,
 };
 
+// ─── Media Help ───────────────────────────────────────────────────────────────
+const HELP_MEDIA = {
+  fa: `# 🖼 راهنمای مدیا
+
+برای ارسال مدیا در Rich Message از سینتکس تصویر Markdown استفاده کنید.
+URL پسوند فایل تعیین می‌کنه چه نوع مدیایی نمایش داده بشه.
+
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
+
+---
+
+## نقشه
+
+\`\`\`
+<tg-map lat="41.9" long="12.5" zoom="14"/>
+\`\`\`
+
+<tg-map lat="41.9" long="12.5" zoom="14"/>
+
+---
+
+## عکس
+
+\`\`\`
+![](https://telegram.org/example/photo.jpg)
+\`\`\`
+
+![](https://telegram.org/example/photo.jpg)
+
+---
+
+## ویدیو
+
+\`\`\`
+![](https://telegram.org/example/video.mp4)
+\`\`\`
+
+![](https://telegram.org/example/video.mp4)
+
+---
+
+## فایل صوتی
+
+\`\`\`
+![](https://telegram.org/example/audio.mp3)
+\`\`\`
+
+![](https://telegram.org/example/audio.mp3)
+
+---
+
+## ویس نوت (ogg)
+
+\`\`\`
+![](https://telegram.org/example/audio.ogg)
+\`\`\`
+
+![](https://telegram.org/example/audio.ogg)
+
+---
+
+## انیمیشن (gif)
+
+\`\`\`
+![](https://telegram.org/example/animation.gif)
+\`\`\`
+
+![](https://telegram.org/example/animation.gif)
+
+---
+
+## مدیا با کپشن
+
+\`\`\`
+![](https://telegram.org/example/photo.jpg "Photo caption")
+![](https://telegram.org/example/video.mp4 "Video caption")
+![](https://telegram.org/example/audio.mp3 "Audio caption")
+![](https://telegram.org/example/audio.ogg "Voice note caption")
+![](https://telegram.org/example/animation.gif "Animation caption")
+\`\`\`
+
+![](https://telegram.org/example/photo.jpg "Photo caption")
+![](https://telegram.org/example/video.mp4 "Video caption")
+![](https://telegram.org/example/audio.mp3 "Audio caption")
+![](https://telegram.org/example/audio.ogg "Voice note caption")
+![](https://telegram.org/example/animation.gif "Animation caption")
+
+---
+
+## اسلایدشو (ترکیبی)
+
+\`\`\`
+<tg-slideshow>
+<img src="https://telegram.org/example/photo.jpg"/>
+<img src="https://telegram.org/example/animation.gif"/>
+<video src="https://telegram.org/example/video.mp4"/><figcaption>Slideshow caption<cite>The Author</cite></figcaption>
+</tg-slideshow>
+\`\`\`
+
+<tg-slideshow>
+<img src="https://telegram.org/example/photo.jpg"/>
+<img src="https://telegram.org/example/animation.gif"/>
+<video src="https://telegram.org/example/video.mp4"/><figcaption>Slideshow caption<cite>The Author</cite></figcaption>
+</tg-slideshow>
+
+---
+
+*پسوند URL = نوع مدیا: jpg/png=عکس · mp4=ویدیو · mp3=صوت · ogg=ویس · gif=انیمیشن* ✨`,
+
+  en: `# 🖼 Media Guide
+
+Use Markdown image syntax to embed media in Rich Messages.
+The URL file extension determines the media type rendered.
+
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
+
+---
+
+## Map
+
+\`\`\`
+<tg-map lat="41.9" long="12.5" zoom="14"/>
+\`\`\`
+
+<tg-map lat="41.9" long="12.5" zoom="14"/>
+
+---
+
+## Photo
+
+\`\`\`
+![](https://telegram.org/example/photo.jpg)
+\`\`\`
+
+![](https://telegram.org/example/photo.jpg)
+
+---
+
+## Video
+
+\`\`\`
+![](https://telegram.org/example/video.mp4)
+\`\`\`
+
+![](https://telegram.org/example/video.mp4)
+
+---
+
+## Audio
+
+\`\`\`
+![](https://telegram.org/example/audio.mp3)
+\`\`\`
+
+![](https://telegram.org/example/audio.mp3)
+
+---
+
+## Voice Note (ogg)
+
+\`\`\`
+![](https://telegram.org/example/audio.ogg)
+\`\`\`
+
+![](https://telegram.org/example/audio.ogg)
+
+---
+
+## Animation (gif)
+
+\`\`\`
+![](https://telegram.org/example/animation.gif)
+\`\`\`
+
+![](https://telegram.org/example/animation.gif)
+
+---
+
+## Media with Captions
+
+\`\`\`
+![](https://telegram.org/example/photo.jpg "Photo caption")
+![](https://telegram.org/example/video.mp4 "Video caption")
+![](https://telegram.org/example/audio.mp3 "Audio caption")
+![](https://telegram.org/example/audio.ogg "Voice note caption")
+![](https://telegram.org/example/animation.gif "Animation caption")
+\`\`\`
+
+![](https://telegram.org/example/photo.jpg "Photo caption")
+![](https://telegram.org/example/video.mp4 "Video caption")
+![](https://telegram.org/example/audio.mp3 "Audio caption")
+![](https://telegram.org/example/audio.ogg "Voice note caption")
+![](https://telegram.org/example/animation.gif "Animation caption")
+
+---
+
+## Slideshow (Combined)
+
+\`\`\`
+<tg-slideshow>
+<img src="https://telegram.org/example/photo.jpg"/>
+<img src="https://telegram.org/example/animation.gif"/>
+<video src="https://telegram.org/example/video.mp4"/><figcaption>Slideshow caption<cite>The Author</cite></figcaption>
+</tg-slideshow>
+\`\`\`
+
+<tg-slideshow>
+<img src="https://telegram.org/example/photo.jpg"/>
+<img src="https://telegram.org/example/animation.gif"/>
+<video src="https://telegram.org/example/video.mp4"/><figcaption>Slideshow caption<cite>The Author</cite></figcaption>
+</tg-slideshow>
+
+---
+
+*URL extension = media type: jpg/png=photo · mp4=video · mp3=audio · ogg=voice · gif=animation* ✨`,
+};
+
 // ─── Demo ─────────────────────────────────────────────────────────────────────
 const DEMO = {
   fa: `# 🎨 دمو کامل — نمونه خروجی
 
 این پیام نمونه خروجی واقعی همه قابلیت‌هاست.
+
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
 
 ---
 
@@ -786,11 +1273,23 @@ console.log("inside details!");
 
 ---
 
-[ConfigWireguard](https://t.me/ConfigWireguard) • [GitHub](https://github.com/DarknessShade) • [ÐΛɌ₭ᑎΞ𐒡𐒡](https://darkness-web.pages.dev/)`,
+## Media — اسلایدشو ترکیبی
+
+<tg-slideshow>
+<img src="https://telegram.org/example/photo.jpg"/>
+<img src="https://telegram.org/example/animation.gif"/>
+<video src="https://telegram.org/example/video.mp4"/><figcaption>Slideshow caption<cite>The Author</cite></figcaption>
+</tg-slideshow>
+
+---
+
+🗽 [GitHub](https://github.com/DarknessShade) •|• 🗽 [Paradise Of Freedom](https://t.me/Paradise_Of_Freedom) •|• 🗽 [ConfigWireguard](https://t.me/ConfigWireguard)`,
 
   en: `# 🎨 Full Demo — Live Output Sample
 
 This message demonstrates every supported feature rendered live.
+
+[Rich Markdown Telegram](https://core.telegram.org/bots/api#rich-message-formatting-options)
 
 ---
 
@@ -873,5 +1372,15 @@ console.log("inside details!");
 
 ---
 
-[ConfigWireguard](https://t.me/ConfigWireguard) • [GitHub](https://github.com/DarknessShade) • [ÐΛɌ₭ᑎΞ𐒡𐒡](https://darkness-web.pages.dev/)`,
+## Media — Combined Slideshow
+
+<tg-slideshow>
+<img src="https://telegram.org/example/photo.jpg"/>
+<img src="https://telegram.org/example/animation.gif"/>
+<video src="https://telegram.org/example/video.mp4"/><figcaption>Slideshow caption<cite>The Author</cite></figcaption>
+</tg-slideshow>
+
+---
+
+🗽 [GitHub](https://github.com/DarknessShade) •|• 🗽 [Paradise Of Freedom](https://t.me/Paradise_Of_Freedom) •|• 🗽 [ConfigWireguard](https://t.me/ConfigWireguard)`,
 };
