@@ -157,10 +157,6 @@ https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo
 
 Released under the **MIT License** — free to use, modify, and distribute, with attribution appreciated.
 
-Created by **ÐΛɌ₭ᑎΞ𐒡𐒡** — [GitHub](https://github.com/DarknessShade) • [Paradise Of Freedom](https://t.me/Paradise_Of_Freedom) • [ConfigWireguard](https://t.me/ConfigWireguard)
-
-⭐ Star the project: **[github.com/DarknessShade/TeleRich](https://github.com/DarknessShade/TeleRich)**
-
 ---
 ---
 <a id="نسخه-فارسی-ir"></a>
@@ -301,6 +297,3 @@ https://api.telegram.org/bot<TOKEN_خودتان>/getWebhookInfo
 
 این پروژه تحت **لایسنس MIT** منتشر شده — استفاده، تغییر و توزیع آن آزاد است، ولی ذکر منبع باعث خوشحالی‌مون می‌شه. 🙏
 
-**ÐΛɌ₭ᑎΞ𐒡𐒡** — [GitHub](https://github.com/DarknessShade) • [Paradise Of Freedom](https://t.me/Paradise_Of_Freedom) • [ConfigWireguard](https://t.me/ConfigWireguard)
-
-⭐ اگه پروژه رو دوست داشتید، ستاره بدید: **[github.com/DarknessShade/TeleRich](https://github.com/DarknessShade/TeleRich)**
