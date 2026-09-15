@@ -35,7 +35,7 @@
 
 می‌توانید ربات زنده و آماده‌ی پروژه را همین حالا امتحان کنید: **[@MarkdownRenderBot](https://t.me/MarkdownRenderBot)**
 
-> 💡 یک نسخه‌ی پایتونی از همین ایده هم توسط جامعه ساخته شده: **[TeleRich Python (arshiaCP)](https://github.com/arshiacomplus/TeleRich)**
+> 💡 یک نسخه‌ی پایتونی از همین ایده هم ساخته شده: **[TeleRich Python (arshiaCP)](https://github.com/arshiacomplus/TeleRich)**
 
 ### ✨ ویژگی‌ها
 
