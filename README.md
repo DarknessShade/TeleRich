@@ -19,9 +19,9 @@
 
 <div align="center">
 
-<a href="https://t.me/Paradise_Of_Freedom"><img src="assets/cta-telegram-channel.svg" alt="Join @Paradise_Of_Freedom" width="20%" /></a>
-<a href="https://t.me/MarkdownRenderBot"><img src="assets/cta-telegram-bot.svg" alt="Try @MarkdownRenderBot" width="20%" /></a>
-<a href="https://github.com/DarknessShade/TeleRich"><img src="assets/cta-star.svg" alt="Star TeleRich on GitHub" width="20%" /></a>
+<a href="https://t.me/Paradise_Of_Freedom"><img src="assets/cta-telegram-channel.svg" alt="Join @Paradise_Of_Freedom" width="25%" /></a>
+<a href="https://t.me/MarkdownRenderBot"><img src="assets/cta-telegram-bot.svg" alt="Try @MarkdownRenderBot" width="25%" /></a>
+<a href="https://github.com/DarknessShade/TeleRich"><img src="assets/cta-star.svg" alt="Star TeleRich on GitHub" width="25%" /></a>
 
 </div>
 
