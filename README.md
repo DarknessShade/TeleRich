@@ -9,7 +9,7 @@
 [![Cloudflare Workers](https://img.shields.io/badge/Runs%20on-Cloudflare%20Workers-F6821F?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-10.3-26A5E4)](https://core.telegram.org/bots/api)
 
-**فارسی** · [English](#-english) — [پرش به فارسی](#-فارسی)
+**فارسی** · [English](#-english) — [فارسی](#-فارسی)
 
 </div>
 
@@ -17,9 +17,9 @@
 
 <div align="center">
 
-<a href="https://t.me/Paradise_Of_Freedom"><img src="assets/cta-telegram-channel.svg" alt="Join @Paradise_Of_Freedom" width="200" /></a>
-<a href="https://t.me/MarkdownRenderBot"><img src="assets/cta-telegram-bot.svg" alt="Try @MarkdownRenderBot" width="200" /></a>
-<a href="https://github.com/DarknessShade/TeleRich"><img src="assets/cta-star.svg" alt="Star TeleRich on GitHub" width="200" /></a>
+<a href="https://t.me/Paradise_Of_Freedom"><img src="assets/cta-telegram-channel.svg" alt="Join @Paradise_Of_Freedom" width="180" /></a>
+<a href="https://t.me/MarkdownRenderBot"><img src="assets/cta-telegram-bot.svg" alt="Try @MarkdownRenderBot" width="180" /></a>
+<a href="https://github.com/DarknessShade/TeleRich"><img src="assets/cta-star.svg" alt="Star TeleRich on GitHub" width="180" /></a>
 
 </div>
 
