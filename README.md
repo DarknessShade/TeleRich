@@ -1,3 +1,5 @@
+<h1 align="center">$$\color{gold} \large \text{Tele Rich}$$</h1>
+
 <div align="center">
 
 <img src="assets/hero.svg" alt="TeleRich — Rich Markdown & HTML messages for Telegram, on Cloudflare Workers" width="100%" />
@@ -9,7 +11,7 @@
 [![Cloudflare Workers](https://img.shields.io/badge/Runs%20on-Cloudflare%20Workers-F6821F?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-10.3-26A5E4)](https://core.telegram.org/bots/api)
 
-**فارسی** · [English](#-english) — [فارسی](#-فارسی)
+ [English](#-english) — [فارسی](#-فارسی)
 
 </div>
 
@@ -113,7 +115,7 @@
 1. پس از اولین دیپلوی، Cloudflare یک آدرس مثل `https://telerich.<your-subdomain>.workers.dev` به شما می‌دهد.
 2. همین آدرس را در مرورگر گوشی باز کنید — صفحه‌ی استودیوی TeleRich باز می‌شود.
 3. چون هنوز از داخل تلگرام باز نکرده‌اید، از شما `ADMIN_KEY` خواسته می‌شود؛ همان مقداری که در قدم ۴ تنظیم کردید را وارد کنید.
-4. در بخش تنظیمات (Settings) داخل استودیو، روی «تست اتصال» بزنید و سپس گزینه‌ی «ثبت Webhook» را انتخاب کنید — این کار به‌صورت امن متد `setWebhook` را همراه با `secret_token` شما و مسیر `/webhook` فراخوانی می‌کند.
+4. در بخش تنظیمات (Settings) داخل استودیو، روی «تست اتصال» بزنید و راهنمای نصب بزنید و سپس گزینه‌ی «ثبت Webhook» را انتخاب کنید — این کار به‌صورت امن متد `setWebhook` را همراه با `secret_token` شما و مسیر `/webhook` فراخوانی می‌کند.
 
 **قدم ۶ — تنظیم دکمه‌ی منو در BotFather (برای باز شدن Mini App)**
 1. دوباره به BotFather پیام دهید و `/mybots` → ربات خودتان → **Bot Settings → Menu Button** (یا مستقیماً دستور `/setmenubutton`) را بزنید.
