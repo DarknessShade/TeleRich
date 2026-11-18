@@ -107,6 +107,8 @@
 | `ADMINS_ID` | فهرستی از شناسه‌های عددی تلگرام با کاما جدا شده، مثلاً `123456,654321` | اختیاری — اگر خالی باشد همه‌ی کاربران احراز‌هویت‌شده می‌توانند از ربات استفاده کنند |
 | `ALLOWED_ORIGIN` | محدود کردن CORS به یک دامنه‌ی مشخص | اختیاری |
 
+**آپلود مدیا (داخل پنجره «مدیا»):** عکس، گیف، ویدیو، صدا (MP3 و OGG برای ویس) و هر فایل دیگر (ZIP، PDF و ...) را تکی یا چندتایی آپلود کنید؛ لینک خودکار به پیام اضافه می‌شود (فایل‌های عمومی با `<tg-document>`). فایل‌ها در KV با نام `FILES` ذخیره می‌شوند (در `wrangler.jsonc` تعریف شده و Cloudflare موقع دیپلوی می‌سازد)، تا ۲۵ مگابایت برای هر فایل، و **بعد از ۷ روز خودکار حذف می‌شوند**.
+
 **قدم ۵ — Deploy و ثبت Webhook**
 1. پس از اولین دیپلوی، Cloudflare یک آدرس مثل `https://telerich.<your-subdomain>.workers.dev` به شما می‌دهد.
 2. همین آدرس را در مرورگر گوشی باز کنید — صفحه‌ی استودیوی TeleRich باز می‌شود.
@@ -237,6 +239,8 @@ In your Worker's **Settings → Variables and Secrets**, add the following (as *
 | `ADMIN_KEY` | A **different** strong random string for external-browser admin access | ✅ Yes |
 | `ADMINS_ID` | Comma-separated Telegram numeric user IDs, e.g. `123456,654321` | Optional — leave empty to allow any authenticated Telegram user |
 | `ALLOWED_ORIGIN` | Restrict CORS to a single origin | Optional |
+
+**Media uploads (in the Media dialog):** upload photos, GIFs, videos, audio (MP3, OGG voice notes) and any other file (ZIP, PDF, …), one or many; links are inserted automatically (general files use `<tg-document>`). Files live in a KV namespace bound as `FILES` (declared in `wrangler.jsonc`, created by Cloudflare on deploy), up to 25 MB each, and are **deleted automatically after 7 days**.
 
 **Step 5 — Deploy and register the webhook**
 1. After the first deploy, Cloudflare gives you a URL like `https://telerich.<your-subdomain>.workers.dev`.

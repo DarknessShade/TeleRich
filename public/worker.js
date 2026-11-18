@@ -1,6 +1,7 @@
 // TeleRich Studio — Telegram Bot API 10.3
 // Deploy exactly two ES modules: worker.js (entry point) and index.js (exported from Studio).
 // Secrets: BOT_TOKEN, ADMIN_KEY, WEBHOOK_SECRET. Optional: ADMINS_ID="123,456".
+// Media uploads: bind a KV namespace named FILES (declared in wrangler.jsonc; Cloudflare creates it on deploy).
 // Never expose BOT_TOKEN or ADMIN_KEY in index.js. ADMIN_KEY is a trusted operator credential.
 import html, { guides, releases, setup, workerSource } from './index.js';
 
@@ -84,6 +85,76 @@ function validateRich(rich) {
 }
 const copyFields = (source, names) => Object.fromEntries(names.filter(k => source[k] !== undefined).map(k => [k, source[k]]));
 
+// ---- Media uploads (KV binding "FILES") ----
+const MAX_UPLOAD = 25 * 1024 * 1024;
+const FILE_TTL = 7 * 24 * 3600; // uploads expire from KV after one week
+// Known types get a proper Content-Type; any other extension is stored and served as a download (documents).
+const MEDIA_TYPES = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', flac: 'audio/flac', pdf: 'application/pdf', zip: 'application/zip', txt: 'text/plain', json: 'application/json', csv: 'text/csv' };
+const FILE_NAME = /^[a-z0-9]{14}\.[a-z0-9]{1,8}$/;
+const fileStore = env => { if (!env.FILES) throw fail('Media uploads need a KV binding named FILES. Add it in wrangler.jsonc or Settings → Bindings.', 503); return env.FILES; };
+const owner = identity => identity.operator ? 'op' : String(identity.user.id);
+async function uploadApi(request, env, url) {
+  if (request.method !== 'POST') throw fail('POST required.', 405);
+  const identity = await authenticate(request, env);
+  const kv = fileStore(env);
+  if (Number(request.headers.get('content-length') || 0) > MAX_UPLOAD) throw fail('File is larger than 25 MB.', 413);
+  const buffer = await request.arrayBuffer();
+  if (!buffer.byteLength) throw fail('Empty file.');
+  if (buffer.byteLength > MAX_UPLOAD) throw fail('File is larger than 25 MB.', 413);
+  let orig = 'file';
+  try { orig = decodeURIComponent(request.headers.get('X-File-Name') || 'file'); } catch { /* keep default */ }
+  orig = orig.slice(0, 100);
+  const type = (request.headers.get('Content-Type') || '').split(';')[0].trim();
+  const fromName = orig.includes('.') ? orig.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) : '';
+  const ext = fromName || Object.keys(MEDIA_TYPES).find(k => MEDIA_TYPES[k] === type) || 'bin';
+  const name = [...crypto.getRandomValues(new Uint8Array(14))].map(b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('') + '.' + ext;
+  const ts = Date.now();
+  const meta = { orig, size: buffer.byteLength, ts, exp: ts + FILE_TTL * 1000, uid: owner(identity) };
+  await kv.put('f:' + name, buffer, { metadata: meta, expirationTtl: FILE_TTL });
+  return { name, url: `${url.origin}/f/${name}`, orig, size: meta.size, ts, exp: meta.exp };
+}
+async function listFiles(env, identity, url) {
+  const kv = fileStore(env), files = [];
+  let cursor;
+  do {
+    const page = await kv.list({ prefix: 'f:', cursor, limit: 1000 });
+    for (const k of page.keys) if (identity.operator || k.metadata?.uid === owner(identity)) files.push({ name: k.name.slice(2), orig: k.metadata?.orig || k.name.slice(2), size: k.metadata?.size || 0, ts: k.metadata?.ts || 0, exp: k.metadata?.exp || 0, url: `${url.origin}/f/${k.name.slice(2)}` });
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor && files.length < 2000);
+  return { files: files.sort((a, b) => b.ts - a.ts) };
+}
+async function deleteFiles(env, identity, names) {
+  const kv = fileStore(env);
+  const valid = (Array.isArray(names) ? names : []).filter(n => FILE_NAME.test(n)).slice(0, 100);
+  let deleted = 0;
+  for (const n of valid) {
+    const { metadata } = await kv.getWithMetadata('f:' + n, 'arrayBuffer');
+    if (metadata && (identity.operator || metadata.uid === owner(identity))) { await kv.delete('f:' + n); deleted++; }
+  }
+  return { deleted };
+}
+async function serveFile(request, env, name) {
+  if (!env.FILES || !FILE_NAME.test(name)) return new Response('Not found', { status: 404 });
+  const { value: buffer, metadata } = await env.FILES.getWithMetadata('f:' + name, 'arrayBuffer');
+  if (!buffer) return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  const total = buffer.byteLength;
+  const type = MEDIA_TYPES[name.split('.')[1]] || 'application/octet-stream';
+  const inline = /^(image|video|audio)\//.test(type) || type === 'application/pdf';
+  const filename = encodeURIComponent(metadata?.orig || name).replace(/'/g, '%27');
+  const headers = { 'Content-Type': type, 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${filename}`, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox', 'Access-Control-Allow-Origin': '*' };
+  let status = 200, start = 0, end = total - 1;
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('Range') || '');
+  if (range && (range[1] || range[2])) {
+    if (range[1] === '') start = Math.max(0, total - Number(range[2]));
+    else { start = Number(range[1]); if (range[2]) end = Math.min(end, Number(range[2])); }
+    if (start > end || start >= total) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } });
+    status = 206;
+    headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
+  }
+  headers['Content-Length'] = String(end - start + 1);
+  return new Response(request.method === 'HEAD' ? null : buffer.slice(start, end + 1), { status, headers });
+}
+
 async function webApi(request, env, url) {
   if (request.method !== 'POST') throw fail('POST required.', 405);
   if (Number(request.headers.get('content-length') || 0) > 524288) throw fail('Request too large.', 413);
@@ -115,6 +186,8 @@ async function webApi(request, env, url) {
     ] });
     return { webhook, commands };
   }
+  if (action === 'files') return listFiles(env, identity, url);
+  if (action === 'files_delete') return deleteFiles(env, identity, data.names);
   if (!['send', 'edit', 'delete', 'channel', 'draft', 'editEphemeralMessageText', 'editEphemeralMessageCaption', 'editEphemeralMessageReplyMarkup', 'deleteEphemeralMessage'].includes(action)) throw fail('Unknown API route.', 404);
   const chatId = data.chat_id || identity.user?.id;
   const chat = await authorizeChat(env, identity, chatId);
@@ -308,7 +381,7 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
     const permitted = !env.ALLOWED_ORIGIN || origin === env.ALLOWED_ORIGIN || origin === url.origin;
-    const cors = { 'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN ? (permitted ? origin || url.origin : url.origin) : '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data', 'Access-Control-Max-Age': '86400', 'Vary': 'Origin' };
+    const cors = { 'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN ? (permitted ? origin || url.origin : url.origin) : '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data, X-File-Name', 'Access-Control-Max-Age': '86400', 'Vary': 'Origin' };
     if (request.method === 'OPTIONS') return new Response(null, { status: permitted ? 204 : 403, headers: cors });
     if (url.pathname === '/webhook') {
       if (request.method !== 'POST') return new Response('POST required', { status: 405 });
@@ -326,9 +399,10 @@ export default {
       }));
       return new Response('OK');
     }
+    if (url.pathname.startsWith('/f/') && (request.method === 'GET' || request.method === 'HEAD')) return serveFile(request, env, url.pathname.slice(3));
     if (url.pathname.startsWith('/api/')) {
       if (!permitted) return result({ ok: false, description: 'Origin not allowed.' }, 403, cors);
-      try { return result({ ok: true, result: await webApi(request, env, url) }, 200, cors); }
+      try { return result({ ok: true, result: await (url.pathname === '/api/upload' ? uploadApi(request, env, url) : webApi(request, env, url)) }, 200, cors); }
       catch (error) { return result({ ok: false, description: error.message || 'Request failed.' }, error.status || 500, cors); }
     }
     if (request.method === 'GET' && url.pathname === '/worker.js') return new Response(workerSource, { headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' } });
